@@ -25,7 +25,7 @@
                        BIT(BTN_R3_RGB_GPIO) | \
                        BIT(WAD_R_RGB_GPIO) )
 
-#define LED_CHAIN_LENGTH 27
+#define LED_CHAIN_LENGTH 9
 
 static const int rgb_gpios[8] = {
     BTN_L1_RGB_GPIO,
@@ -80,7 +80,8 @@ clear_mask = (~value) & ALL_RGB_MASK
 
 */
 
-static void rgb_shift(const uint32_t *bit_pattern) {
+/* currently take ~280us*/
+void __no_inline_not_in_flash_func(rgb_shift)(const uint32_t *bit_pattern) {
     static const volatile uint32_t* sio_base = (volatile uint32_t*)SIO_BASE;
     static const uint32_t rgb_mask = RGB_BIT_MASK;
 
@@ -95,10 +96,12 @@ static void rgb_shift(const uint32_t *bit_pattern) {
                 "mov r3, %[t1]\n" /* wait 0.4us */
                 "1: sub r3, #1\n"
                 "bne 1b\n"
+                "nop\n"
                 "str %[clr_mask], [%[sio_base], %[clr_off]]\n" /* write clear mask for low GPIO group */
                 "mov r3, %[t1]\n" /* wait 0.4us */
                 "1: sub r3, #1\n"
                 "bne 1b\n"
+                "nop\n"
                 "str %[mask], [%[sio_base], %[clr_off]]\n" /* Set all RGB GPIO to LOW  */
                 "mov r3, %[t2]\n" /* wait 0.45us */
                 "1: sub r3, #1\n"
@@ -109,8 +112,8 @@ static void rgb_shift(const uint32_t *bit_pattern) {
             [sio_base] "l" (sio_base),
             [set_off] "i" (SIO_GPIO_OUT_SET_OFFSET),
             [clr_off] "i" (SIO_GPIO_OUT_CLR_OFFSET),
-            [t1] "i" (12), /* TODO: tune delay for better margin */
-            [t2] "i" (14)
+            [t1] "i" (16),
+            [t2] "i" (18)
             : "r3", "cc"
             );
         };
@@ -151,8 +154,8 @@ int main() {
     /* set all RGB gpio to output */
     for (i = 0; i < ARRAY_SIZE(rgb_gpios); i++) {
         gpio_init(rgb_gpios[i]);
-        gpio_set_dir(rgb_gpios[i], GPIO_OUT);
         gpio_put(rgb_gpios[i], 0); // drive low
+        gpio_set_dir(rgb_gpios[i], GPIO_OUT);
     }
 
     multicore_launch_core1(core1_entry);
