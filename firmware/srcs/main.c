@@ -64,7 +64,7 @@ static uint32_t button_colors[8] = {
     0x888888
 };
 
-static mutex_t rgb_mutex;
+static spin_lock_t *rgb_spin_lock;
 
 /*
   ASM bitbang for WS2812B RGB LED
@@ -138,15 +138,15 @@ void __no_inline_not_in_flash_func(rgb_shift)(const uint32_t *bit_pattern) {
 }
 
 static void rgb_set_color(int idx, uint32_t val) {
-    mutex_enter_blocking(&rgb_mutex);
+    uint32_t save = spin_lock_blocking(rgb_spin_lock);
     button_colors[idx] = val;
-    mutex_exit(&rgb_mutex);
+    spin_unlock(rgb_spin_lock, save);
 }
 
 static void rgb_generate_pattern(uint32_t *bit_pattern) {
     int i, j;
 
-    mutex_enter_blocking(&rgb_mutex);
+    uint32_t save = spin_lock_blocking(rgb_spin_lock);
     for (i = 0; i < 24; i++) {
         for (j = 0; j < 8; j++) {
             if (button_colors[j] & BIT(i))
@@ -155,7 +155,7 @@ static void rgb_generate_pattern(uint32_t *bit_pattern) {
                 bit_pattern[i] &= ~BIT(rgb_gpios[j]);
         }
     }
-    mutex_exit(&rgb_mutex);
+    spin_unlock(rgb_spin_lock, save);
 }
 
 void core1_entry() {
@@ -176,7 +176,7 @@ int main() {
 
     stdio_init_all();
 
-    mutex_init(&rgb_mutex);
+    rgb_spin_lock = spin_lock_instance(next_striped_spin_lock_num());
 
     /* set all RGB gpio to output */
     for (i = 0; i < ARRAY_SIZE(rgb_gpios); i++) {
