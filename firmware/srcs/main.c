@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "pico/bootrom.h"
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(*x))
 
@@ -25,7 +26,17 @@
                        BIT(BTN_R3_RGB_GPIO) | \
                        BIT(WAD_R_RGB_GPIO) )
 
+/* Longest LED chain length - WAD have 9x3 in parallel */
 #define LED_CHAIN_LENGTH 9
+
+#define BTN_L1_RGB_IDX 0
+#define BTN_L2_RGB_IDX 1
+#define BTN_L3_RGB_IDX 2
+#define WAD_L_RGB_IDX  3
+#define BTN_R1_RGB_IDX 4
+#define BTN_R2_RGB_IDX 5
+#define BTN_R3_RGB_IDX 6
+#define WAD_R_RGB_IDX  7
 
 static const int rgb_gpios[8] = {
     BTN_L1_RGB_GPIO,
@@ -38,16 +49,22 @@ static const int rgb_gpios[8] = {
     WAD_R_RGB_GPIO
 };
 
+#define COLOR_BLUE  0xff0000
+#define COLOR_RED   0x00ff00
+#define COLOR_GREEN 0x0000ff
+
 static uint32_t button_colors[8] = {
-    0xff0000,
-    0x00ff00,
-    0x0000ff,
+    0xff0000, //Blue
+    0x00ff00, //Red
+    0x0000ff, //Green
     0xffffff,
     0xff00ff,
     0x00ffff,
     0xffff00,
     0x888888
 };
+
+static mutex_t rgb_mutex;
 
 /*
   ASM bitbang for WS2812B RGB LED
@@ -120,9 +137,16 @@ void __no_inline_not_in_flash_func(rgb_shift)(const uint32_t *bit_pattern) {
     };
 }
 
-void rgb_set_color(uint32_t *bit_pattern)
-{
+static void rgb_set_color(int idx, uint32_t val) {
+    mutex_enter_blocking(&rgb_mutex);
+    button_colors[idx] = val;
+    mutex_exit(&rgb_mutex);
+}
+
+static void rgb_generate_pattern(uint32_t *bit_pattern) {
     int i, j;
+
+    mutex_enter_blocking(&rgb_mutex);
     for (i = 0; i < 24; i++) {
         for (j = 0; j < 8; j++) {
             if (button_colors[j] & BIT(i))
@@ -131,18 +155,19 @@ void rgb_set_color(uint32_t *bit_pattern)
                 bit_pattern[i] &= ~BIT(rgb_gpios[j]);
         }
     }
+    mutex_exit(&rgb_mutex);
 }
 
 void core1_entry() {
     int i;
-    uint32_t rgb_bit_pattern[24] = {0};
-    printf("Hello from core 1\n");
+    static uint32_t rgb_bit_pattern[24] = {0};
 
     while (1) {
-        printf("Go\n");
-        rgb_set_color(rgb_bit_pattern);
+        rgb_generate_pattern(rgb_bit_pattern);
         rgb_shift(rgb_bit_pattern);
-        sleep_ms(1000);
+
+        /* place holder to meet Tres - can be remove if loop take longer than Tres */
+        sleep_us(50);
     }
 }
 
@@ -150,6 +175,8 @@ int main() {
     int i;
 
     stdio_init_all();
+
+    mutex_init(&rgb_mutex);
 
     /* set all RGB gpio to output */
     for (i = 0; i < ARRAY_SIZE(rgb_gpios); i++) {
@@ -161,6 +188,20 @@ int main() {
     multicore_launch_core1(core1_entry);
 
     printf("Pigeki hello!\n");
+
+    rgb_set_color(BTN_L1_RGB_IDX, COLOR_BLUE);
+    sleep_ms(1000);
+    rgb_set_color(BTN_L1_RGB_IDX, COLOR_RED);
+    sleep_ms(1000);
+    rgb_set_color(BTN_L1_RGB_IDX, COLOR_GREEN);
+    sleep_ms(1000);
+    rgb_set_color(BTN_L1_RGB_IDX, COLOR_BLUE | COLOR_RED);
+    sleep_ms(1000);
+    rgb_set_color(BTN_L1_RGB_IDX, COLOR_GREEN | COLOR_RED);
+    sleep_ms(3000);
+
+    printf("Go to bootrom USB boot\n");
+    reset_usb_boot(0,0);
 
     while (true)
         continue;
