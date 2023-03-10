@@ -15,6 +15,19 @@
 #define BTN_R3_RGB_GPIO 13
 #define WAD_R_RGB_GPIO 14
 
+#define BTN_L1_SW_GPIO 23
+#define BTN_L2_SW_GPIO 21
+#define BTN_L3_SW_GPIO 19
+#define BTN_STAB_L_SW 24
+
+#define BTN_R1_SW_GPIO 9
+#define BTN_R2_SW_GPIO 10
+#define BTN_R3_SW_GPIO 12
+#define BTN_STAB_R_SW 7
+
+
+
+
 #define BIT(x) (1UL << (x))
 
 #define RGB_BIT_MASK ( BIT(BTN_L1_RGB_GPIO) | \
@@ -38,7 +51,7 @@
 #define BTN_R3_RGB_IDX 6
 #define WAD_R_RGB_IDX  7
 
-static const int rgb_gpios[8] = {
+static const uint8_t rgb_gpios[8] = {
     BTN_L1_RGB_GPIO,
     BTN_L2_RGB_GPIO,
     BTN_L3_RGB_GPIO,
@@ -158,18 +171,55 @@ static void rgb_generate_pattern(uint32_t *bit_pattern) {
     spin_unlock(rgb_spin_lock, save);
 }
 
+
+static volatile uint32_t debounced_state;
+
+void debounce_sw()
+{
+    /* four bits vertical counter debounce */
+    static uint32_t cnt0, cnt1, cnt2, cnt3;
+    uint32_t delta;
+    uint32_t sample = sio_hw->gpio_in;
+
+    delta = sample ^ debounced_state;
+    cnt3 = (cnt3 ^ (cnt2 & cnt1 & cnt0)) & (delta & sample);
+    cnt2 = (cnt2 ^ (cnt1 & cnt0)) & (delta & sample);
+    cnt1 = (cnt1 ^ cnt0) & (delta & sample);
+    cnt0 = ~cnt0 & (delta & sample);
+    debounced_state ^= (delta & ~(cnt0 | cnt1 | cnt2 | cnt3));
+}
+
 void core1_entry() {
     int i;
     static uint32_t rgb_bit_pattern[24] = {0};
+    uint32_t ts;
+
+    rgb_generate_pattern(rgb_bit_pattern);
 
     while (1) {
-        rgb_generate_pattern(rgb_bit_pattern);
         rgb_shift(rgb_bit_pattern);
 
-        /* place holder to meet Tres - can be remove if loop take longer than Tres */
-        sleep_us(50);
+        ts = timer_hw->timerawl;
+        rgb_generate_pattern(rgb_bit_pattern);
+        debounce_sw();
+
+        /* Make sure Tres >50us is meet */
+        while (timer_hw->timerawl - ts < 50) {
+            tight_loop_contents();
+        }
     }
 }
+
+static const uint8_t sw_gpios[] = {
+    BTN_L1_SW_GPIO,
+    BTN_L2_SW_GPIO,
+    BTN_L3_SW_GPIO,
+    BTN_STAB_L_SW,
+    BTN_R1_SW_GPIO,
+    BTN_R2_SW_GPIO,
+    BTN_R3_SW_GPIO,
+    BTN_STAB_R_SW,
+};
 
 int main() {
     int i;
@@ -183,29 +233,56 @@ int main() {
         gpio_init(rgb_gpios[i]);
         gpio_put(rgb_gpios[i], 0); // drive low
         gpio_set_dir(rgb_gpios[i], GPIO_OUT);
+        gpio_set_slew_rate(rgb_gpios[i], GPIO_SLEW_RATE_SLOW);
+    }
+
+    /* set all switch gpio to input */
+    for (i = 0; i < ARRAY_SIZE(sw_gpios); i++) {
+        gpio_init(sw_gpios[i]);
+        gpio_set_dir(sw_gpios[i], GPIO_IN);
+        gpio_pull_up(sw_gpios[i]);
+    }
+
+    /* initialize debounce state */
+    debounced_state = sio_hw->gpio_in;
+
+    /* For debug */
+    gpio_init(2);
+    gpio_init(3);
+    gpio_set_dir(2, GPIO_OUT);
+    gpio_set_dir(3, GPIO_OUT);
+
+    /* check recovery button */
+    /* TODO: Make this harder to accidently press */
+    if (!gpio_get(BTN_STAB_R_SW)) {
+        printf("Go to bootrom USB boot\n");
+        reset_usb_boot(0,0);
+        panic("returned from USB boot??");
     }
 
     multicore_launch_core1(core1_entry);
 
     printf("Pigeki hello!\n");
 
-    rgb_set_color(BTN_L1_RGB_IDX, COLOR_BLUE);
-    sleep_ms(1000);
-    rgb_set_color(BTN_L1_RGB_IDX, COLOR_RED);
-    sleep_ms(1000);
-    rgb_set_color(BTN_L1_RGB_IDX, COLOR_GREEN);
-    sleep_ms(1000);
-    rgb_set_color(BTN_L1_RGB_IDX, COLOR_BLUE | COLOR_RED);
-    sleep_ms(1000);
-    rgb_set_color(BTN_L1_RGB_IDX, COLOR_GREEN | COLOR_RED);
-    sleep_ms(3000);
+    // rgb_set_color(BTN_L1_RGB_IDX, COLOR_BLUE);
+    // sleep_ms(1000);
+    // rgb_set_color(BTN_L1_RGB_IDX, COLOR_RED);
+    // sleep_ms(1000);
+    // rgb_set_color(BTN_L1_RGB_IDX, COLOR_GREEN);
+    // sleep_ms(1000);
+    // rgb_set_color(BTN_L1_RGB_IDX, COLOR_BLUE | COLOR_RED);
+    // sleep_ms(1000);
+    // rgb_set_color(BTN_L1_RGB_IDX, COLOR_GREEN | COLOR_RED);
+    // sleep_ms(3000);
 
-    printf("Go to bootrom USB boot\n");
-    reset_usb_boot(0,0);
 
-    while (true)
-        continue;
+    while (true) {
+        gpio_put(2, gpio_get(BTN_L1_SW_GPIO));
+        gpio_put(3, !!(debounced_state & BIT(BTN_L1_SW_GPIO)));
+    }
 
 
     return 0;
 }
+
+
