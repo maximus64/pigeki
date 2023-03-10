@@ -25,6 +25,8 @@
 #include "pico/multicore.h"
 #include "pico/bootrom.h"
 #include "hardware/pwm.h"
+#include "hardware/adc.h"
+#include "hardware/dma.h"
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(*x))
 #define BIT(x) (1UL << (x))
@@ -53,6 +55,10 @@
 #define BTN_R3_SW_GPIO 12
 #define BTN_STAB_R_SW_GPIO 7
 
+#define LEVER_ADC_GPIO 26
+#define WAD_L_ADC_GPIO 27
+#define WAD_R_ADC_GPIO 28
+#define VBUS_ADC_GPIO 29 /* Measure VBUS so we can correct lever input */
 
 
 #define RGB_BIT_MASK ( BIT(BTN_L1_RGB_GPIO) | \
@@ -103,6 +109,19 @@ static uint32_t button_colors[8] = {
 };
 
 static spin_lock_t *rgb_spin_lock;
+
+static const uint8_t sw_gpios[] = {
+    BTN_L1_SW_GPIO,
+    BTN_L2_SW_GPIO,
+    BTN_L3_SW_GPIO,
+    BTN_STAB_L_SW_GPIO,
+    BTN_R1_SW_GPIO,
+    BTN_R2_SW_GPIO,
+    BTN_R3_SW_GPIO,
+    BTN_STAB_R_SW_GPIO,
+};
+
+static uint16_t adc_buf[4];
 
 /*
   ASM bitbang for WS2812B RGB LED
@@ -235,17 +254,6 @@ void core1_entry() {
     }
 }
 
-static const uint8_t sw_gpios[] = {
-    BTN_L1_SW_GPIO,
-    BTN_L2_SW_GPIO,
-    BTN_L3_SW_GPIO,
-    BTN_STAB_L_SW_GPIO,
-    BTN_R1_SW_GPIO,
-    BTN_R2_SW_GPIO,
-    BTN_R3_SW_GPIO,
-    BTN_STAB_R_SW_GPIO,
-};
-
 int main() {
     int i;
 
@@ -266,6 +274,47 @@ int main() {
         gpio_init(sw_gpios[i]);
         gpio_set_dir(sw_gpios[i], GPIO_IN);
         gpio_pull_up(sw_gpios[i]);
+    }
+
+    {
+        uint dma_ctrl_channel, dma_data_channel;
+        dma_channel_config ctrl_cfg, data_cfg;
+        const uint16_t* write_addr[] = { &adc_buf[0] };
+
+        /* setup adc */
+        adc_init();
+        adc_gpio_init(WAD_L_ADC_GPIO);
+        adc_gpio_init(WAD_R_ADC_GPIO);
+        adc_gpio_init(LEVER_ADC_GPIO);
+        adc_gpio_init(VBUS_ADC_GPIO);
+
+        adc_select_input(0);
+        adc_set_round_robin(0xf);
+        adc_fifo_setup(true, true, 1, false, false);
+        adc_set_clkdiv(250.f);
+
+        dma_ctrl_channel = dma_claim_unused_channel(true);
+        dma_data_channel = dma_claim_unused_channel(true);
+
+        ctrl_cfg = dma_channel_get_default_config(dma_ctrl_channel);
+        channel_config_set_transfer_data_size(&ctrl_cfg, DMA_SIZE_32);
+        channel_config_set_read_increment(&ctrl_cfg, false);
+        channel_config_set_write_increment(&ctrl_cfg, false);
+        channel_config_set_chain_to(&ctrl_cfg, dma_data_channel);
+        dma_channel_configure(dma_ctrl_channel, &ctrl_cfg,
+            &dma_hw->ch[dma_data_channel].write_addr,
+            &write_addr, 1, false);
+
+        data_cfg = dma_channel_get_default_config(dma_data_channel);
+        channel_config_set_transfer_data_size(&data_cfg, DMA_SIZE_16);
+        channel_config_set_read_increment(&data_cfg, false);
+        channel_config_set_write_increment(&data_cfg, true);
+        channel_config_set_chain_to(&data_cfg, dma_ctrl_channel);
+        channel_config_set_dreq(&data_cfg, DREQ_ADC);
+        dma_channel_configure(dma_data_channel, &data_cfg, adc_buf, &adc_hw->fifo, 4, true);
+
+        /* start ADC capture */
+        adc_run(true);
     }
 
     /* setup PWM for stab button */
@@ -318,10 +367,10 @@ int main() {
     while (true) {
         gpio_put(2, gpio_get(BTN_L1_SW_GPIO));
         gpio_put(3, !!(debounced_state & BIT(BTN_L1_SW_GPIO)));
+        printf("lever: %d wadl: %d wadr: %d vbus: %d\n",
+               adc_buf[0], adc_buf[1], adc_buf[2], adc_buf[3]);
     }
 
 
     return 0;
 }
-
-
