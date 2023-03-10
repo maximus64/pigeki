@@ -15,7 +15,7 @@ add_executable(pigeki
 	       )
 
 # Add pico_stdlib library which aggregates commonly used features
-target_link_libraries(pigeki pico_stdlib pico_multicore)
+target_link_libraries(pigeki pico_stdlib pico_multicore hardware_pwm)
 
 # create map/bin/hex/uf2 file in addition to ELF.
 pico_add_extra_outputs(pigeki)

@@ -24,9 +24,12 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/bootrom.h"
+#include "hardware/pwm.h"
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(*x))
+#define BIT(x) (1UL << (x))
 
+/* GPIO pins definition */
 #define BTN_L1_RGB_GPIO 22
 #define BTN_L2_RGB_GPIO 20
 #define BTN_L3_RGB_GPIO 18
@@ -37,20 +40,20 @@
 #define BTN_R3_RGB_GPIO 13
 #define WAD_R_RGB_GPIO 14
 
+#define BTN_STAB_L_LED_GPIO 6
+#define BTN_STAB_R_LED_GPIO 25
+
 #define BTN_L1_SW_GPIO 23
 #define BTN_L2_SW_GPIO 21
 #define BTN_L3_SW_GPIO 19
-#define BTN_STAB_L_SW 24
+#define BTN_STAB_L_SW_GPIO 24
 
 #define BTN_R1_SW_GPIO 9
 #define BTN_R2_SW_GPIO 10
 #define BTN_R3_SW_GPIO 12
-#define BTN_STAB_R_SW 7
+#define BTN_STAB_R_SW_GPIO 7
 
 
-
-
-#define BIT(x) (1UL << (x))
 
 #define RGB_BIT_MASK ( BIT(BTN_L1_RGB_GPIO) | \
                        BIT(BTN_L2_RGB_GPIO) | \
@@ -236,11 +239,11 @@ static const uint8_t sw_gpios[] = {
     BTN_L1_SW_GPIO,
     BTN_L2_SW_GPIO,
     BTN_L3_SW_GPIO,
-    BTN_STAB_L_SW,
+    BTN_STAB_L_SW_GPIO,
     BTN_R1_SW_GPIO,
     BTN_R2_SW_GPIO,
     BTN_R3_SW_GPIO,
-    BTN_STAB_R_SW,
+    BTN_STAB_R_SW_GPIO,
 };
 
 int main() {
@@ -265,6 +268,20 @@ int main() {
         gpio_pull_up(sw_gpios[i]);
     }
 
+    /* setup PWM for stab button */
+    gpio_set_function(BTN_STAB_L_LED_GPIO, GPIO_FUNC_PWM);
+    gpio_set_function(BTN_STAB_R_LED_GPIO, GPIO_FUNC_PWM);
+    gpio_set_slew_rate(BTN_STAB_L_LED_GPIO, GPIO_SLEW_RATE_SLOW);
+    gpio_set_slew_rate(BTN_STAB_R_LED_GPIO, GPIO_SLEW_RATE_SLOW);
+
+    pwm_config config = pwm_get_default_config();
+    pwm_config_set_clkdiv(&config, 4.f);
+    pwm_init(pwm_gpio_to_slice_num(BTN_STAB_L_LED_GPIO), &config, true);
+    pwm_init(pwm_gpio_to_slice_num(BTN_STAB_R_LED_GPIO), &config, true);
+
+    pwm_set_gpio_level(BTN_STAB_L_LED_GPIO, 0x8000); /* default to 50% duty */
+    pwm_set_gpio_level(BTN_STAB_R_LED_GPIO, 0x8000); /* default to 50% duty */
+
     /* initialize debounce state */
     debounced_state = sio_hw->gpio_in;
 
@@ -276,7 +293,7 @@ int main() {
 
     /* check recovery button */
     /* TODO: Make this harder to accidently press */
-    if (!gpio_get(BTN_STAB_R_SW)) {
+    if (!gpio_get(BTN_STAB_R_SW_GPIO)) {
         printf("Go to bootrom USB boot\n");
         reset_usb_boot(0,0);
         panic("returned from USB boot??");
