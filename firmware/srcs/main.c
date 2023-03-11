@@ -21,6 +21,7 @@
  */
 
 #include <stdio.h>
+#include <math.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/bootrom.h"
@@ -125,6 +126,7 @@ static const uint8_t sw_gpios[] = {
 };
 
 static uint8_t adc_buf[4];
+static uint8_t lever_pos, wad_l_pos, wad_r_pos;
 
 /*
   ASM bitbang for WS2812B RGB LED
@@ -239,6 +241,116 @@ static inline bool button_get(int gpio) {
     return !(debounced_state & BIT(gpio));
 }
 
+static float snapCurve(float x)
+{
+  float y = 1.0 / (x + 1.0);
+  y = (1.0 - y) * 2.0;
+  if(y > 1.0) {
+    return 1.0;
+  }
+  return y;
+}
+
+static void filter_scale_wad_lever (void)
+{
+#define WAD_IN_MIN 140
+#define WAD_IN_MAX 190
+#define WAD_OUT_MIN 0
+#define WAD_OUT_MAX 255
+
+#define LEVER_IN_MIN 51
+#define LEVER_IN_MAX 182
+#define LEVER_OUT_MIN 0
+#define LEVER_OUT_MAX 255
+
+#define LEVER_SNAP_MULTIPLIER 0.0005
+#define WAD_SNAP_MULTIPLIER 0.005
+
+    const float wad_in_range = (float)(WAD_IN_MAX - WAD_IN_MIN);
+    const float wad_out_range = (float)(WAD_OUT_MAX - WAD_OUT_MIN);
+
+    const float wad_factor = wad_out_range / wad_in_range;
+    const float wad_base = (float)(WAD_OUT_MIN) - (float)(WAD_IN_MIN) * wad_factor;
+
+    const float lever_in_range = (float)(LEVER_IN_MAX - LEVER_IN_MIN);
+    const float lever_out_range = (float)(LEVER_OUT_MAX - LEVER_OUT_MIN);
+
+    const float lever_factor = lever_out_range / lever_in_range;
+    const float lever_base = (float)(LEVER_OUT_MIN) - (float)(LEVER_IN_MIN) * lever_factor;
+
+    uint8_t lever_in = adc_buf[0];
+    uint8_t wad_l_in = ~adc_buf[1]; /* inverted */
+    uint8_t wad_r_in = ~adc_buf[2]; /* inverted */
+
+#ifdef BYPASS_ADC_FILTER
+    lever_pos = lever_in;
+    wad_l_pos = wad_l_pos;
+    wad_r_in = wad_r_in;
+
+    return;
+#endif
+
+    float lever_out, wad_l_out, wad_r_out;
+
+    /* Scale ADC input to expected range */
+    lever_out = lever_base + (float)lever_in * lever_factor;
+    wad_l_out = wad_base + (float)wad_l_in * wad_factor;
+    wad_r_out = wad_base + (float)wad_r_in * wad_factor;
+
+
+    /* filter noise */
+    /* based on ResponsiveAnalogRead: https://github.com/dxinteractive/ResponsiveAnalogRead*/
+    static float lever_smooth, wad_l_smooth, wad_r_smooth;
+
+    /* get difference between new input value and current smooth value */
+    float lever_diff = fabsf(lever_out - lever_smooth);
+    float wad_l_diff = fabsf(wad_l_out - wad_l_smooth);
+    float wad_r_diff = fabsf(wad_r_out - wad_r_smooth);
+
+    /*
+     * use a 'snap curve' function, where we pass in the diff (x) and get back a number from 0-1.
+     * We want small values of x to result in an output close to zero, so when the smooth value is close to the input value
+     * it'll smooth out noise aggressively by responding slowly to sudden changes.
+     * We want a small increase in x to result in a much higher output value, so medium and large movements are snappy and responsive,
+     * and aren't made sluggish by unnecessarily filtering out noise. A hyperbola (f(x) = 1/x) curve is used.
+     * First x has an offset of 1 applied, so x = 0 now results in a value of 1 from the hyperbola function.
+     * High values of x tend toward 0, but we want an output that begins at 0 and tends toward 1, so 1-y flips this up the right way.
+     * Finally the result is multiplied by 2 and capped at a maximum of one, which means that at a certain point all larger movements are maximally snappy
+     *
+     * then multiply the input by SNAP_MULTIPLER so input values fit the snap curve better.
+     */
+    float lever_snap = snapCurve(lever_diff * LEVER_SNAP_MULTIPLIER);
+    float wad_l_snap = snapCurve(wad_l_diff * WAD_SNAP_MULTIPLIER);
+    float wad_r_snap = snapCurve(wad_r_diff * WAD_SNAP_MULTIPLIER);
+
+    /* calculate the exponential moving average based on the snap */
+    lever_smooth += (lever_out - lever_smooth) * lever_snap;
+    wad_l_smooth += (wad_l_out - wad_l_smooth) * wad_l_snap;
+    wad_r_smooth += (wad_r_out - wad_r_smooth) * wad_r_snap;
+
+    // ensure output is in bounds
+    if(lever_smooth < 0.0f)
+        lever_pos = 0;
+    else if(lever_smooth > 255.0f)
+        lever_pos = 255;
+    else
+        lever_pos = (uint8_t)lever_smooth;
+
+    if(wad_l_smooth < 0.0f)
+        wad_l_pos = 0;
+    else if(wad_l_smooth > 255.0f)
+        wad_l_pos = 255;
+    else
+        wad_l_pos = (uint8_t)wad_l_smooth;
+
+    if(wad_r_smooth < 0.0f)
+        wad_r_pos = 0;
+    else if(wad_r_smooth > 255.0f)
+        wad_r_pos = 255;
+    else
+        wad_r_pos = (uint8_t)wad_r_smooth;
+}
+
 void core1_entry() {
     int i;
     static uint32_t rgb_bit_pattern[24] = {0};
@@ -252,6 +364,7 @@ void core1_entry() {
         ts = timer_hw->timerawl;
         rgb_generate_pattern(rgb_bit_pattern);
         button_debounce();
+        filter_scale_wad_lever();
 
         /* Make sure Tres >50us is meet */
         while (timer_hw->timerawl - ts < 50) {
@@ -284,9 +397,9 @@ static void sendReportData(void) {
                          (button_get(BTN_R2_SW_GPIO) << 5) |
                          (button_get(BTN_R3_SW_GPIO) << 6) |
                          (button_get(BTN_STAB_R_SW_GPIO) << 7);
-        report.x = adc_buf[0];
-        report.y = adc_buf[1];
-        report.z = adc_buf[2];
+        report.x = lever_pos;
+        report.y = wad_l_pos;
+        report.z = wad_r_pos;
 
         tud_hid_n_report(0x00, 1, &report, sizeof(report));
     }
