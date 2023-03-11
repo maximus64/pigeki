@@ -121,7 +121,7 @@ static const uint8_t sw_gpios[] = {
     BTN_STAB_R_SW_GPIO,
 };
 
-static uint16_t adc_buf[4];
+static uint8_t adc_buf[4];
 
 /*
   ASM bitbang for WS2812B RGB LED
@@ -279,7 +279,7 @@ int main() {
     {
         uint dma_ctrl_channel, dma_data_channel;
         dma_channel_config ctrl_cfg, data_cfg;
-        const uint16_t* write_addr[] = { &adc_buf[0] };
+        const uint8_t* write_addr[] = { &adc_buf[0] };
 
         /* setup adc */
         adc_init();
@@ -290,7 +290,7 @@ int main() {
 
         adc_select_input(0);
         adc_set_round_robin(0xf);
-        adc_fifo_setup(true, true, 1, false, false);
+        adc_fifo_setup(true, true, 1, false, true);
         adc_set_clkdiv(250.f);
 
         dma_ctrl_channel = dma_claim_unused_channel(true);
@@ -306,7 +306,7 @@ int main() {
             &write_addr, 1, false);
 
         data_cfg = dma_channel_get_default_config(dma_data_channel);
-        channel_config_set_transfer_data_size(&data_cfg, DMA_SIZE_16);
+        channel_config_set_transfer_data_size(&data_cfg, DMA_SIZE_8);
         channel_config_set_read_increment(&data_cfg, false);
         channel_config_set_write_increment(&data_cfg, true);
         channel_config_set_chain_to(&data_cfg, dma_ctrl_channel);
