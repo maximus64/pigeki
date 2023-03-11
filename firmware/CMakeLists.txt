@@ -12,11 +12,17 @@ pico_sdk_init()
 # rest of your project
 add_executable(pigeki
 	       srcs/main.c
+		   srcs/usb_descriptors.c
 	       )
+
+target_include_directories(pigeki PRIVATE ${CMAKE_CURRENT_LIST_DIR}/srcs)
 
 # Add pico_stdlib library which aggregates commonly used features
 target_link_libraries(pigeki pico_stdlib
 							 pico_multicore
+							 pico_unique_id
+							 tinyusb_device
+							 tinyusb_board
 							 hardware_pwm
 							 hardware_adc
 							 hardware_dma)

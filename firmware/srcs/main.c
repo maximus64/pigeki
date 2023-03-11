@@ -28,6 +28,9 @@
 #include "hardware/adc.h"
 #include "hardware/dma.h"
 
+#include "bsp/board.h"
+#include "tusb.h"
+
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(*x))
 #define BIT(x) (1UL << (x))
 
@@ -254,9 +257,36 @@ void core1_entry() {
     }
 }
 
+
+static void sendReportData(void) {
+    static struct report {
+        uint8_t buttons;
+        uint8_t x;
+        uint8_t y;
+        uint8_t z;
+    } report;
+
+    // Poll every 1ms
+    const uint32_t interval_ms = 1;
+    static uint32_t start_ms = 0;
+
+    if (board_millis() - start_ms < interval_ms) return;  // not enough time
+    start_ms += interval_ms;
+
+    if (tud_hid_ready()) {
+        report.buttons += 1;
+        report.x += 1;
+        report.y += 1;
+        report.z += 1;
+
+        tud_hid_n_report(0x00, 1, &report, sizeof(report));
+    }
+}
+
 int main() {
     int i;
 
+    board_init();
     stdio_init_all();
 
     rgb_spin_lock = spin_lock_instance(next_striped_spin_lock_num());
@@ -348,6 +378,7 @@ int main() {
         panic("returned from USB boot??");
     }
 
+    tusb_init();
     multicore_launch_core1(core1_entry);
 
     printf("Pigeki hello!\n");
@@ -365,12 +396,51 @@ int main() {
 
 
     while (true) {
-        gpio_put(2, gpio_get(BTN_L1_SW_GPIO));
-        gpio_put(3, !!(debounced_state & BIT(BTN_L1_SW_GPIO)));
-        printf("lever: %d wadl: %d wadr: %d vbus: %d\n",
-               adc_buf[0], adc_buf[1], adc_buf[2], adc_buf[3]);
+        // gpio_put(2, gpio_get(BTN_L1_SW_GPIO));
+        // gpio_put(3, !!(debounced_state & BIT(BTN_L1_SW_GPIO)));
+        // printf("lever: %d wadl: %d wadr: %d vbus: %d\n",
+        //        adc_buf[0], adc_buf[1], adc_buf[2], adc_buf[3]);
+
+        tud_task();
+        sendReportData();
     }
 
 
     return 0;
+}
+
+
+// Invoked when received GET_REPORT control request
+// Application must fill buffer report's content and return its length.
+// Return zero will cause the stack to STALL request
+uint16_t tud_hid_get_report_cb(uint8_t itf,
+                               uint8_t report_id,
+                               hid_report_type_t report_type,
+                               uint8_t* buffer,
+                               uint16_t reqlen)
+{
+  // TODO not Implemented
+  (void) itf;
+  (void) report_id;
+  (void) report_type;
+  (void) buffer;
+  (void) reqlen;
+
+  return 0;
+}
+
+// Invoked when received SET_REPORT control request or
+// received data on OUT endpoint ( Report ID = 0, Type = 0 )
+void tud_hid_set_report_cb(uint8_t itf,
+                           uint8_t report_id,
+                           hid_report_type_t report_type,
+                           uint8_t const* buffer,
+                           uint16_t bufsize)
+{
+  // TODO set RGB LEDs
+  (void) itf;
+  (void) report_id;
+  (void) report_type;
+  (void) buffer;
+  (void) bufsize;
 }
