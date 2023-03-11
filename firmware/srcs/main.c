@@ -1,5 +1,5 @@
 /*
- * Copyright © 2023 Khoa Hoang <admin@khoahoang.com>
+ * Copyright (c) 2023 Khoa Hoang <admin@khoahoang.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the “Software”),
@@ -221,8 +221,7 @@ static void rgb_generate_pattern(uint32_t *bit_pattern) {
 
 static volatile uint32_t debounced_state;
 
-void debounce_sw()
-{
+static void button_debounce(void) {
     /* four bits vertical counter debounce */
     static uint32_t cnt0, cnt1, cnt2, cnt3;
     uint32_t delta;
@@ -234,6 +233,10 @@ void debounce_sw()
     cnt1 = (cnt1 ^ cnt0) & (delta & sample);
     cnt0 = ~cnt0 & (delta & sample);
     debounced_state ^= (delta & ~(cnt0 | cnt1 | cnt2 | cnt3));
+}
+
+static inline bool button_get(int gpio) {
+    return !(debounced_state & BIT(gpio));
 }
 
 void core1_entry() {
@@ -248,7 +251,7 @@ void core1_entry() {
 
         ts = timer_hw->timerawl;
         rgb_generate_pattern(rgb_bit_pattern);
-        debounce_sw();
+        button_debounce();
 
         /* Make sure Tres >50us is meet */
         while (timer_hw->timerawl - ts < 50) {
@@ -257,9 +260,8 @@ void core1_entry() {
     }
 }
 
-
 static void sendReportData(void) {
-    static struct report {
+    struct report {
         uint8_t buttons;
         uint8_t x;
         uint8_t y;
@@ -274,10 +276,17 @@ static void sendReportData(void) {
     start_ms += interval_ms;
 
     if (tud_hid_ready()) {
-        report.buttons += 1;
-        report.x += 1;
-        report.y += 1;
-        report.z += 1;
+        report.buttons = button_get(BTN_L1_SW_GPIO) |
+                         (button_get(BTN_L2_SW_GPIO) << 1) |
+                         (button_get(BTN_L3_SW_GPIO) << 2) |
+                         (button_get(BTN_STAB_L_SW_GPIO) << 3) |
+                         (button_get(BTN_R1_SW_GPIO) << 4) |
+                         (button_get(BTN_R2_SW_GPIO) << 5) |
+                         (button_get(BTN_R3_SW_GPIO) << 6) |
+                         (button_get(BTN_STAB_R_SW_GPIO) << 7);
+        report.x = adc_buf[0];
+        report.y = adc_buf[1];
+        report.z = adc_buf[2];
 
         tud_hid_n_report(0x00, 1, &report, sizeof(report));
     }
@@ -288,6 +297,7 @@ int main() {
 
     board_init();
     stdio_init_all();
+    tusb_init();
 
     rgb_spin_lock = spin_lock_instance(next_striped_spin_lock_num());
 
@@ -297,6 +307,7 @@ int main() {
         gpio_put(rgb_gpios[i], 0); // drive low
         gpio_set_dir(rgb_gpios[i], GPIO_OUT);
         gpio_set_slew_rate(rgb_gpios[i], GPIO_SLEW_RATE_SLOW);
+        gpio_set_drive_strength(rgb_gpios[i], GPIO_DRIVE_STRENGTH_2MA);
     }
 
     /* set all switch gpio to input */
@@ -309,7 +320,7 @@ int main() {
     {
         uint dma_ctrl_channel, dma_data_channel;
         dma_channel_config ctrl_cfg, data_cfg;
-        const uint8_t* write_addr[] = { &adc_buf[0] };
+        static const uint8_t* write_addr[] = { &adc_buf[0] };
 
         /* setup adc */
         adc_init();
@@ -330,9 +341,8 @@ int main() {
         channel_config_set_transfer_data_size(&ctrl_cfg, DMA_SIZE_32);
         channel_config_set_read_increment(&ctrl_cfg, false);
         channel_config_set_write_increment(&ctrl_cfg, false);
-        channel_config_set_chain_to(&ctrl_cfg, dma_data_channel);
         dma_channel_configure(dma_ctrl_channel, &ctrl_cfg,
-            &dma_hw->ch[dma_data_channel].write_addr,
+            &dma_hw->ch[dma_data_channel].al2_write_addr_trig,
             &write_addr, 1, false);
 
         data_cfg = dma_channel_get_default_config(dma_data_channel);
@@ -352,6 +362,8 @@ int main() {
     gpio_set_function(BTN_STAB_R_LED_GPIO, GPIO_FUNC_PWM);
     gpio_set_slew_rate(BTN_STAB_L_LED_GPIO, GPIO_SLEW_RATE_SLOW);
     gpio_set_slew_rate(BTN_STAB_R_LED_GPIO, GPIO_SLEW_RATE_SLOW);
+    gpio_set_drive_strength(BTN_STAB_L_LED_GPIO, GPIO_DRIVE_STRENGTH_2MA);
+    gpio_set_drive_strength(BTN_STAB_R_LED_GPIO, GPIO_DRIVE_STRENGTH_2MA);
 
     pwm_config config = pwm_get_default_config();
     pwm_config_set_clkdiv(&config, 4.f);
@@ -378,7 +390,6 @@ int main() {
         panic("returned from USB boot??");
     }
 
-    tusb_init();
     multicore_launch_core1(core1_entry);
 
     printf("Pigeki hello!\n");
@@ -400,7 +411,6 @@ int main() {
         // gpio_put(3, !!(debounced_state & BIT(BTN_L1_SW_GPIO)));
         // printf("lever: %d wadl: %d wadr: %d vbus: %d\n",
         //        adc_buf[0], adc_buf[1], adc_buf[2], adc_buf[3]);
-
         tud_task();
         sendReportData();
     }
