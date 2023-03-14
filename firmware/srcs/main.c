@@ -253,8 +253,10 @@ static float snapCurve(float x)
 
 static void filter_scale_wad_lever (void)
 {
-#define WAD_IN_MIN 140
-#define WAD_IN_MAX 190
+#define WAD_L_IN_MIN 140
+#define WAD_L_IN_MAX 190
+#define WAD_R_IN_MIN 149
+#define WAD_R_IN_MAX 189
 #define WAD_OUT_MIN 0
 #define WAD_OUT_MAX 255
 
@@ -266,11 +268,15 @@ static void filter_scale_wad_lever (void)
 #define LEVER_SNAP_MULTIPLIER 0.0005
 #define WAD_SNAP_MULTIPLIER 0.005
 
-    const float wad_in_range = (float)(WAD_IN_MAX - WAD_IN_MIN);
+    const float wad_l_in_range = (float)(WAD_L_IN_MAX - WAD_L_IN_MIN);
+    const float wad_r_in_range = (float)(WAD_R_IN_MAX - WAD_R_IN_MIN);
     const float wad_out_range = (float)(WAD_OUT_MAX - WAD_OUT_MIN);
 
-    const float wad_factor = wad_out_range / wad_in_range;
-    const float wad_base = (float)(WAD_OUT_MIN) - (float)(WAD_IN_MIN) * wad_factor;
+    const float wad_l_factor = wad_out_range / wad_l_in_range;
+    const float wad_l_base = (float)(WAD_OUT_MIN) - (float)(WAD_L_IN_MIN) * wad_l_factor;
+
+    const float wad_r_factor = wad_out_range / wad_r_in_range;
+    const float wad_r_base = (float)(WAD_OUT_MIN) - (float)(WAD_R_IN_MIN) * wad_r_factor;
 
     const float lever_in_range = (float)(LEVER_IN_MAX - LEVER_IN_MIN);
     const float lever_out_range = (float)(LEVER_OUT_MAX - LEVER_OUT_MIN);
@@ -284,8 +290,8 @@ static void filter_scale_wad_lever (void)
 
 #ifdef BYPASS_ADC_FILTER
     lever_pos = lever_in;
-    wad_l_pos = wad_l_pos;
-    wad_r_in = wad_r_in;
+    wad_l_pos = wad_l_in;
+    wad_r_pos = wad_r_in;
 
     return;
 #endif
@@ -294,8 +300,8 @@ static void filter_scale_wad_lever (void)
 
     /* Scale ADC input to expected range */
     lever_out = lever_base + (float)lever_in * lever_factor;
-    wad_l_out = wad_base + (float)wad_l_in * wad_factor;
-    wad_r_out = wad_base + (float)wad_r_in * wad_factor;
+    wad_l_out = wad_l_base + (float)wad_l_in * wad_l_factor;
+    wad_r_out = wad_r_base + (float)wad_r_in * wad_r_factor;
 
 
     /* filter noise */
