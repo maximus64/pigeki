@@ -77,6 +77,9 @@
 /* Longest LED chain length - WAD have 9x3 in parallel */
 #define LED_CHAIN_LENGTH 9
 
+/* This value limit the brightness of the WAD button LED. Max: 11730 */
+#define WAD_RGB_TOTAL_LIMIT (7000)
+
 #define BTN_L1_RGB_IDX 0
 #define BTN_L2_RGB_IDX 1
 #define BTN_L3_RGB_IDX 2
@@ -97,19 +100,25 @@ static const uint8_t rgb_gpios[8] = {
     WAD_R_RGB_GPIO
 };
 
-#define COLOR_BLUE  0xff0000
-#define COLOR_RED   0x00ff00
-#define COLOR_GREEN 0x0000ff
+typedef union {
+    uint32_t val;
+    struct {
+        uint8_t b;
+        uint8_t r;
+        uint8_t g;
+        uint8_t pad;
+    };
+} rgb_color_t;
 
-static uint32_t button_colors[8] = {
-    0xff0000, //Blue
-    0x00ff00, //Red
-    0x0000ff, //Green
-    0xffffff,
-    0xff00ff,
-    0x00ffff,
-    0xffff00,
-    0x888888
+static rgb_color_t button_colors[8] = {
+    { .r = 255 },
+    { .g = 255 },
+    { .b = 255 },
+    { .r = 233, .g = 87, .b = 255 },
+    { .r = 255 },
+    { .g = 255 },
+    { .b = 255 },
+    { .r = 233, .g = 87, .b = 255 },
 };
 
 static spin_lock_t *rgb_spin_lock;
@@ -199,25 +208,53 @@ void __no_inline_not_in_flash_func(rgb_shift)(const uint32_t *bit_pattern) {
     };
 }
 
-static void rgb_set_color(int idx, uint32_t val) {
+static void rgb_set_color(int idx, rgb_color_t val) {
     uint32_t save = spin_lock_blocking(rgb_spin_lock);
     button_colors[idx] = val;
     spin_unlock(rgb_spin_lock, save);
 }
 
+static inline uint32_t rgb_sum_color(rgb_color_t in) {
+    return ((uint32_t)in.r * 16 + (uint32_t)in.g * 15 + (uint32_t)in.b * 16);
+}
+
+static void rgb_scale(rgb_color_t *c, float scale)
+{
+    c->r = (uint8_t)((float)c->r * scale);
+    c->g = (uint8_t)((float)c->g * scale);
+    c->b = (uint8_t)((float)c->b * scale);
+}
+
 static void rgb_generate_pattern(uint32_t *bit_pattern) {
     int i, j;
+    rgb_color_t colors[8];
+    uint32_t wad_sum = 0;
 
     uint32_t save = spin_lock_blocking(rgb_spin_lock);
+    memcpy(&colors[0], &button_colors[0], sizeof(colors));
+    spin_unlock(rgb_spin_lock, save);
+
+    /*
+     * Need to limit power for WAD button because we drawn too much power from
+     * USB port
+     */
+    wad_sum += rgb_sum_color(colors[WAD_L_RGB_IDX]);
+    wad_sum += rgb_sum_color(colors[WAD_R_RGB_IDX]);
+
+    if (wad_sum > WAD_RGB_TOTAL_LIMIT) {
+        const float scale = (float) WAD_RGB_TOTAL_LIMIT / (float) wad_sum;
+        rgb_scale(&colors[WAD_L_RGB_IDX], scale);
+        rgb_scale(&colors[WAD_R_RGB_IDX], scale);
+    }
+
     for (i = 0; i < 24; i++) {
         for (j = 0; j < 8; j++) {
-            if (button_colors[j] & BIT(i))
+            if (colors[j].val & BIT(23 - i))
                 bit_pattern[i] |= BIT(rgb_gpios[j]);
             else
                 bit_pattern[i] &= ~BIT(rgb_gpios[j]);
         }
     }
-    spin_unlock(rgb_spin_lock, save);
 }
 
 
