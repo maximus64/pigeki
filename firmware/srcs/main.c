@@ -305,6 +305,11 @@ static void filter_scale_wad_lever (void)
 #define LEVER_SNAP_MULTIPLIER 0.0005
 #define WAD_SNAP_MULTIPLIER 0.005
 
+/* Filter strength for VBUS ADC: scale 0 -> 1, 1.0 - no filter, */
+#define VBUS_FILTER_STRENGTH 0.0001f
+/* 8 bit ADC reference value when VBUS is at 5v */
+#define VBUS_5V_REFERENCE_VALUE 197
+
     const float wad_l_in_range = (float)(WAD_L_IN_MAX - WAD_L_IN_MIN);
     const float wad_r_in_range = (float)(WAD_R_IN_MAX - WAD_R_IN_MIN);
     const float wad_out_range = (float)(WAD_OUT_MAX - WAD_OUT_MIN);
@@ -324,6 +329,7 @@ static void filter_scale_wad_lever (void)
     uint8_t lever_in = adc_buf[0];
     uint8_t wad_l_in = ~adc_buf[1]; /* inverted */
     uint8_t wad_r_in = ~adc_buf[2]; /* inverted */
+    uint8_t vbus_in  = adc_buf[3];
 
 #ifdef BYPASS_ADC_FILTER
     lever_pos = lever_in;
@@ -333,10 +339,26 @@ static void filter_scale_wad_lever (void)
     return;
 #endif
 
+    /* filter for VBUS */
+    static float vbus_filter;
+
+    float vbus_diff = fabsf(vbus_in - vbus_filter);
+    float vbus_snap = snapCurve(vbus_diff * VBUS_FILTER_STRENGTH);
+    vbus_filter += (vbus_in - vbus_filter) * vbus_snap;
+
+    /* Calculate error from 5v */
+    float vbus_error = VBUS_5V_REFERENCE_VALUE / vbus_filter;
+
     float lever_out, wad_l_out, wad_r_out;
 
-    /* Scale ADC input to expected range */
-    lever_out = lever_base + (float)lever_in * lever_factor;
+    /*
+     * Scale ADC input to expected range
+     *
+     * Since the lever hall effect sensor are reference of VBUS, we need to
+     * compensate for voltage drop on VBUS line since LED can draw lot of
+     * current and causing lever reading to be lower than normal.
+     */
+    lever_out = lever_base + ((float)lever_in * vbus_error) * lever_factor;
     wad_l_out = wad_l_base + (float)wad_l_in * wad_l_factor;
     wad_r_out = wad_r_base + (float)wad_r_in * wad_r_factor;
 
