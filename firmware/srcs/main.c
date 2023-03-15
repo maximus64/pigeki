@@ -46,8 +46,8 @@
 #define BTN_R3_RGB_GPIO 13
 #define WAD_R_RGB_GPIO 14
 
-#define BTN_STAB_L_LED_GPIO 6
-#define BTN_STAB_R_LED_GPIO 25
+#define BTN_STAB_L_LED_GPIO 25
+#define BTN_STAB_R_LED_GPIO 6
 
 #define BTN_L1_SW_GPIO 23
 #define BTN_L2_SW_GPIO 21
@@ -208,7 +208,7 @@ void __no_inline_not_in_flash_func(rgb_shift)(const uint32_t *bit_pattern) {
     };
 }
 
-static void rgb_set_color(int idx, rgb_color_t val) {
+static void rgb_set_color(int idx, const rgb_color_t val) {
     uint32_t save = spin_lock_blocking(rgb_spin_lock);
     button_colors[idx] = val;
     spin_unlock(rgb_spin_lock, save);
@@ -292,7 +292,7 @@ static void filter_scale_wad_lever (void)
 {
 #define WAD_L_IN_MIN 140
 #define WAD_L_IN_MAX 190
-#define WAD_R_IN_MIN 149
+#define WAD_R_IN_MIN 150
 #define WAD_R_IN_MAX 189
 #define WAD_OUT_MIN 0
 #define WAD_OUT_MAX 255
@@ -474,7 +474,7 @@ int main() {
     int i;
 
     board_init();
-    stdio_init_all();
+    //stdio_init_all();
     tusb_init();
 
     rgb_spin_lock = spin_lock_instance(next_striped_spin_lock_num());
@@ -493,6 +493,13 @@ int main() {
         gpio_init(sw_gpios[i]);
         gpio_set_dir(sw_gpios[i], GPIO_IN);
         gpio_pull_up(sw_gpios[i]);
+    }
+
+    /* check recovery button */
+    if (!gpio_get(BTN_STAB_R_SW_GPIO)) {
+        //printf("Go to bootrom USB boot\n");
+        reset_usb_boot(0,0);
+        panic("returned from USB boot??");
     }
 
     {
@@ -554,41 +561,9 @@ int main() {
     /* initialize debounce state */
     debounced_state = sio_hw->gpio_in;
 
-    /* For debug */
-    gpio_init(2);
-    gpio_init(3);
-    gpio_set_dir(2, GPIO_OUT);
-    gpio_set_dir(3, GPIO_OUT);
-
-    /* check recovery button */
-    /* TODO: Make this harder to accidently press */
-    if (!gpio_get(BTN_STAB_R_SW_GPIO)) {
-        printf("Go to bootrom USB boot\n");
-        reset_usb_boot(0,0);
-        panic("returned from USB boot??");
-    }
-
     multicore_launch_core1(core1_entry);
 
-    printf("Pigeki hello!\n");
-
-    // rgb_set_color(BTN_L1_RGB_IDX, COLOR_BLUE);
-    // sleep_ms(1000);
-    // rgb_set_color(BTN_L1_RGB_IDX, COLOR_RED);
-    // sleep_ms(1000);
-    // rgb_set_color(BTN_L1_RGB_IDX, COLOR_GREEN);
-    // sleep_ms(1000);
-    // rgb_set_color(BTN_L1_RGB_IDX, COLOR_BLUE | COLOR_RED);
-    // sleep_ms(1000);
-    // rgb_set_color(BTN_L1_RGB_IDX, COLOR_GREEN | COLOR_RED);
-    // sleep_ms(3000);
-
-
     while (true) {
-        // gpio_put(2, gpio_get(BTN_L1_SW_GPIO));
-        // gpio_put(3, !!(debounced_state & BIT(BTN_L1_SW_GPIO)));
-        // printf("lever: %d wadl: %d wadr: %d vbus: %d\n",
-        //        adc_buf[0], adc_buf[1], adc_buf[2], adc_buf[3]);
         tud_task();
         sendReportData();
     }
@@ -625,10 +600,30 @@ void tud_hid_set_report_cb(uint8_t itf,
                            uint8_t const* buffer,
                            uint16_t bufsize)
 {
-  // TODO set RGB LEDs
-  (void) itf;
-  (void) report_id;
-  (void) report_type;
-  (void) buffer;
-  (void) bufsize;
+    (void) itf;
+    int i;
+
+    typedef struct {
+        struct {
+            uint8_t r;
+            uint8_t g;
+            uint8_t b;
+        } rgb[8];
+        uint8_t stab_l;
+        uint8_t stab_r;
+    } set_led_report_t;
+
+    if (report_id == 1 &&
+        report_type == HID_REPORT_TYPE_OUTPUT &&
+        bufsize == 26) {
+        const set_led_report_t *report = (const set_led_report_t *) buffer;
+        for (i = 0; i < 8; i++) {
+            const rgb_color_t c = { .r = report->rgb[i].r,
+                                .g = report->rgb[i].g,
+                                .b = report->rgb[i].b};
+            rgb_set_color(i, c);
+        }
+        pwm_set_gpio_level(BTN_STAB_L_LED_GPIO, report->stab_l << 8);
+        pwm_set_gpio_level(BTN_STAB_R_LED_GPIO, report->stab_r << 8);
+    }
 }

@@ -90,7 +90,8 @@ uint8_t const desc_hid_report[] = {
         /* RGB led output*/
         HID_USAGE_PAGE_N(HID_USAGE_PAGE_VENDOR, 2), \
             HID_USAGE(0x20), \
-            HID_REPORT_COUNT((8 * 3)),   \
+            /* 8 RGB led + 2 single led */
+            HID_REPORT_COUNT(26), \
             HID_REPORT_SIZE(8), \
             HID_LOGICAL_MIN(0x00), \
             HID_LOGICAL_MAX_N(0x00ff, 2), \
