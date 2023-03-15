@@ -110,17 +110,7 @@ typedef union {
     };
 } rgb_color_t;
 
-static rgb_color_t button_colors[8] = {
-    { .r = 255 },
-    { .g = 255 },
-    { .b = 255 },
-    { .r = 233, .g = 87, .b = 255 },
-    { .r = 255 },
-    { .g = 255 },
-    { .b = 255 },
-    { .r = 233, .g = 87, .b = 255 },
-};
-
+static rgb_color_t button_colors[8] = {0};
 static spin_lock_t *rgb_spin_lock;
 
 static const uint8_t sw_gpios[] = {
@@ -470,6 +460,38 @@ static void sendReportData(void) {
     }
 }
 
+static void do_startup_led_animation(void) {
+    /* default colors */
+    static const rgb_color_t default_colors[8] = {
+        { .r = 255 },
+        { .g = 255 },
+        { .b = 255 },
+        { .r = 233, .g = 87, .b = 255 },
+        { .r = 255 },
+        { .g = 255 },
+        { .b = 255 },
+        { .r = 233, .g = 87, .b = 255 },
+    };
+    static const uint16_t stab_default = 0x4000;
+
+    int i, j;
+    const int steps = 1024;
+    const float interval = 1.0f/steps;
+    float scale = 0.0f;
+
+    for (i = 0; i < steps; i++) {
+        for (j = 0; j < 8; j++) {
+            rgb_color_t c = default_colors[j];
+            rgb_scale(&c, scale);
+            rgb_set_color(j, c);
+        }
+        pwm_set_gpio_level(BTN_STAB_L_LED_GPIO, (uint16_t)(stab_default * scale));
+        pwm_set_gpio_level(BTN_STAB_R_LED_GPIO, (uint16_t)(stab_default * scale));
+        scale += interval;
+        sleep_ms(3);
+    }
+}
+
 int main() {
     int i;
 
@@ -555,13 +577,16 @@ int main() {
     pwm_init(pwm_gpio_to_slice_num(BTN_STAB_L_LED_GPIO), &config, true);
     pwm_init(pwm_gpio_to_slice_num(BTN_STAB_R_LED_GPIO), &config, true);
 
-    pwm_set_gpio_level(BTN_STAB_L_LED_GPIO, 0x8000); /* default to 50% duty */
-    pwm_set_gpio_level(BTN_STAB_R_LED_GPIO, 0x8000); /* default to 50% duty */
+    /* turn off for now */
+    pwm_set_gpio_level(BTN_STAB_L_LED_GPIO, 0);
+    pwm_set_gpio_level(BTN_STAB_R_LED_GPIO, 0);
 
     /* initialize debounce state */
     debounced_state = sio_hw->gpio_in;
 
     multicore_launch_core1(core1_entry);
+
+    do_startup_led_animation();
 
     while (true) {
         tud_task();
