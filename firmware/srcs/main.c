@@ -297,7 +297,7 @@ static void filter_scale_wad_lever (void)
 #define WAD_OUT_MIN 0
 #define WAD_OUT_MAX 255
 
-#define LEVER_IN_MIN 51
+#define LEVER_IN_MIN 53
 #define LEVER_IN_MAX 182
 #define LEVER_OUT_MIN 0
 #define LEVER_OUT_MAX 255
